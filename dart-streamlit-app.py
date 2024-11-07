@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import folium
-from streamlit_folium import folium_static
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 
@@ -145,45 +143,20 @@ def main():
             route = st.session_state.dart_system.find_optimal_route(bus_id)
             st.session_state.dart_system.buses[bus_id].route = route
     
-    # Create map
-    m = folium.Map(
-        location=[13.0827, 80.2000],
-        zoom_start=11,
-        tiles="OpenStreetMap"
-    )
+    # Display map using Streamlit's built-in map
+    st.write("### Real-time Route Map")
     
-    # Add stops to map
-    for stop_id, stop in st.session_state.dart_system.stops.items():
-        color = 'red' if demands[stop_id] > 0 else 'green'
-        folium.CircleMarker(
-            location=[stop.location.latitude, stop.location.longitude],
-            radius=10,
-            popup=f"{stop_id}\nDemand: {demands[stop_id]}",
-            color=color,
-            fill=True
-        ).add_to(m)
-    
-    # Add bus routes to map
-    for i, (bus_id, bus) in enumerate(st.session_state.dart_system.buses.items()):
-        if bus.route:
-            route_coords = []
-            for stop_id in bus.route:
-                stop = st.session_state.dart_system.stops[stop_id]
-                route_coords.append([
-                    stop.location.latitude,
-                    stop.location.longitude
-                ])
-            
-            folium.PolyLine(
-                route_coords,
-                weight=2,
-                color=st.session_state.dart_system.colors[i],
-                popup=f"{bus_id} Route"
-            ).add_to(m)
+    # Create DataFrame for stops
+    stop_data = {
+        'location': [[stop.location.latitude, stop.location.longitude] 
+                    for stop in st.session_state.dart_system.stops.values()],
+        'name': list(st.session_state.dart_system.stops.keys()),
+        'demand': [demands[stop_id] for stop_id in st.session_state.dart_system.stops]
+    }
+    stop_df = pd.DataFrame(stop_data)
     
     # Display map
-    st.write("### Real-time Route Map")
-    folium_static(m)
+    st.map(stop_df, latitude=0, longitude=1, size='demand')
     
     # Display routes
     st.write("### Current Routes")
@@ -203,9 +176,8 @@ def main():
         - Distance between stops
         - Bus capacity (60 passengers)
     4. The map shows:
-        - Red markers: Stops with waiting passengers
-        - Green markers: Stops with no demand
-        - Colored lines: Routes for each bus
+        - Circle size indicates demand at each stop
+        - Routes are displayed as text below the map
     """)
 
 if __name__ == "__main__":
