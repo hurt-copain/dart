@@ -1,15 +1,11 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
-import time
 
-# Data structures
 @dataclass
 class Location:
     latitude: float
@@ -102,6 +98,7 @@ class DARTSystem:
 
 def main():
     st.title("DART System Simulation")
+    st.write("Dynamic Adaptive Route Transit System")
     
     # Initialize system
     if 'dart_system' not in st.session_state:
@@ -151,7 +148,8 @@ def main():
     # Create map
     m = folium.Map(
         location=[13.0827, 80.2000],
-        zoom_start=11
+        zoom_start=11,
+        tiles="OpenStreetMap"
     )
     
     # Add stops to map
@@ -184,15 +182,31 @@ def main():
             ).add_to(m)
     
     # Display map
+    st.write("### Real-time Route Map")
     folium_static(m)
     
     # Display routes
-    st.header("Current Routes")
+    st.write("### Current Routes")
     for bus_id, bus in st.session_state.dart_system.buses.items():
         if bus.route:
             st.write(f"{bus_id}: {' → '.join(bus.route)}")
         else:
             st.write(f"{bus_id}: No route assigned")
+
+    # Add explanation
+    st.write("### How it works")
+    st.write("""
+    1. Use the sliders in the sidebar to set passenger demand at each stop
+    2. Click 'Update Routes' to recalculate optimal routes
+    3. Routes are calculated based on:
+        - Current demand at each stop
+        - Distance between stops
+        - Bus capacity (60 passengers)
+    4. The map shows:
+        - Red markers: Stops with waiting passengers
+        - Green markers: Stops with no demand
+        - Colored lines: Routes for each bus
+    """)
 
 if __name__ == "__main__":
     main()
