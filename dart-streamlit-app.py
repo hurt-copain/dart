@@ -40,13 +40,13 @@ class DARTSystem:
             'Bus_4': {'name': 'Purple Connect', 'color': '#B74BFF'}
         }
         self.assigned_demands = {}
-        
+    
     def add_stop(self, stop_id: str, latitude: float, longitude: float):
         self.stops[stop_id] = BusStop(
             id=stop_id,
             location=Location(latitude, longitude)
         )
-        
+    
     def add_bus(self, bus_id: str, start_stop: str, capacity: int):
         self.buses[bus_id] = Bus(
             id=bus_id,
@@ -108,7 +108,7 @@ class DARTSystem:
             
             if next_stop is None:
                 break
-                
+            
             route.append(next_stop)
             pickup = min(remaining_demands[next_stop], remaining_capacity)
             remaining_capacity -= pickup
@@ -117,14 +117,14 @@ class DARTSystem:
         
         return route
 
-def update_all_routes(self):
+    def update_all_routes(self):
         self.assigned_demands = {}
         bus_ids = sorted(self.buses.keys())
         
         for bus_id in bus_ids:
             route = self.find_optimal_route(bus_id)
             self.buses[bus_id].route = route
-
+    
     def get_animation_frame(self, progress):
         frame_data = []
         
@@ -158,7 +158,7 @@ def update_all_routes(self):
                     'longitude': lon,
                     'color': bus.route_color
                 })
-
+                
                 # Add route lines
                 for i in range(len(bus.route) - 1):
                     start = self.stops[bus.route[i]]
