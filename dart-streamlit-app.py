@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import time
 import altair as alt
+from vega_datasets import data
 
 @dataclass
 class Location:
@@ -26,12 +27,19 @@ class Bus:
     passengers: int = 0
     route: List[str] = None
     route_color: str = None
+    label: str = None
 
 class DARTSystem:
     def __init__(self):
         self.stops: Dict[str, BusStop] = {}
         self.buses: Dict[str, Bus] = {}
-        self.colors = ['red', 'green', 'blue', 'orange', 'purple']
+        self.colors = {
+            'Bus_0': {'name': 'Express Red Line', 'color': '#FF4B4B'},
+            'Bus_1': {'name': 'Rapid Blue Line', 'color': '#4B8BFF'},
+            'Bus_2': {'name': 'Green Circuit', 'color': '#4BFF4B'},
+            'Bus_3': {'name': 'Orange Loop', 'color': '#FFB74B'},
+            'Bus_4': {'name': 'Purple Connect', 'color': '#B74BFF'}
+        }
         self.assigned_demands = {}
         
     def add_stop(self, stop_id: str, latitude: float, longitude: float):
@@ -45,9 +53,10 @@ class DARTSystem:
             id=bus_id,
             current_stop=start_stop,
             capacity=capacity,
-            route_color=self.colors[len(self.buses) % len(self.colors)]
+            route_color=self.colors[bus_id]['color'],
+            label=self.colors[bus_id]['name']
         )
-        
+    
     def _calculate_distance(self, loc1: Location, loc2: Location) -> float:
         R = 6371
         lat1, lon1 = np.radians([loc1.latitude, loc1.longitude])
@@ -57,23 +66,19 @@ class DARTSystem:
         return 2 * R * np.arcsin(np.sqrt(a))
 
     def find_optimal_route(self, bus_id: str, max_stops: int = 5) -> List[str]:
-        """Find optimal route with better demand distribution"""
         bus = self.buses[bus_id]
         remaining_capacity = bus.capacity
         
-        # Calculate remaining demands
         remaining_demands = {
             stop_id: max(0, stop.demand - self.assigned_demands.get(stop_id, 0))
             for stop_id, stop in self.stops.items()
         }
         
-        # If no remaining demands, try to distribute buses evenly
         if sum(remaining_demands.values()) == 0:
             remaining_demands = {
                 stop_id: stop.demand for stop_id, stop in self.stops.items()
             }
         
-        # Start from current stop
         route = [bus.current_stop]
         current_stop = bus.current_stop
         
@@ -90,7 +95,6 @@ class DARTSystem:
                     if distance == 0:
                         distance = 0.1
                     
-                    # Enhanced scoring system
                     demand_score = demand / bus.capacity
                     distance_score = 1 / distance
                     coverage_score = 1 if stop_id not in [b.current_stop for b in self.buses.values()] else 0
@@ -115,32 +119,14 @@ class DARTSystem:
         return route
 
     def update_all_routes(self):
-        """Update routes for all buses with improved distribution"""
         self.assigned_demands = {}
         bus_ids = sorted(self.buses.keys())
         
-        # Calculate total system demand
-        total_demand = sum(stop.demand for stop in self.stops.values())
-        
-        # Assign initial starting positions if needed
-        if all(len(self.stops) >= 5 for _ in range(5)):
-            start_positions = list(self.stops.keys())[:5]
-            for bus_id, start_pos in zip(bus_ids, start_positions):
-                self.buses[bus_id].current_stop = start_pos
-        
-        # Calculate routes for each bus
         for bus_id in bus_ids:
             route = self.find_optimal_route(bus_id)
-            if not route:  # If no optimal route found, assign a backup route
-                available_stops = [stop_id for stop_id in self.stops.keys()
-                                 if stop_id not in [b.current_stop for b in self.buses.values()]]
-                if available_stops:
-                    self.buses[bus_id].current_stop = available_stops[0]
-                    route = self.find_optimal_route(bus_id)
             self.buses[bus_id].route = route
 
     def get_animation_frame(self, progress):
-        """Create animation frame data"""
         frame_data = []
         
         # Add stops
@@ -159,58 +145,117 @@ class DARTSystem:
                 route_idx = min(int(progress * (len(bus.route) - 1)), len(bus.route) - 2)
                 sub_progress = (progress * (len(bus.route) - 1)) % 1
                 
-                # Get current and next stop
                 current_stop = self.stops[bus.route[route_idx]]
                 next_stop = self.stops[bus.route[route_idx + 1]]
                 
-                # Interpolate position
                 lat = current_stop.location.latitude + (next_stop.location.latitude - current_stop.location.latitude) * sub_progress
                 lon = current_stop.location.longitude + (next_stop.location.longitude - current_stop.location.longitude) * sub_progress
                 
                 frame_data.append({
                     'type': 'bus',
-                    'id': bus_id,
+                    'id': bus.label,  # Use bus label instead of ID
                     'latitude': lat,
                     'longitude': lon,
                     'color': bus.route_color
                 })
+
+                # Add route lines
+                for i in range(len(bus.route) - 1):
+                    start = self.stops[bus.route[i]]
+                    end = self.stops[bus.route[i + 1]]
+                    frame_data.append({
+                        'type': 'route',
+                        'id': bus.label,
+                        'latitude': start.location.latitude,
+                        'longitude': start.location.longitude,
+                        'latitude2': end.location.latitude,
+                        'longitude2': end.location.longitude,
+                        'color': bus.route_color
+                    })
         
         return pd.DataFrame(frame_data)
 
 def create_animation_chart(frame_data):
-    """Create Altair chart for animation frame"""
+    # Set chart bounds with padding
+    x_min = frame_data['longitude'].min() - 0.1
+    x_max = frame_data['longitude'].max() + 0.1
+    y_min = frame_data['latitude'].min() - 0.1
+    y_max = frame_data['latitude'].max() + 0.1
     
-    # Base chart
+    # Base chart settings
     base = alt.Chart(frame_data).encode(
-        x='longitude:Q',
-        y='latitude:Q'
+        x=alt.X('longitude:Q', scale=alt.Scale(domain=[x_min, x_max])),
+        y=alt.Y('latitude:Q', scale=alt.Scale(domain=[y_min, y_max]))
     )
     
-    # Stops layer
+    # Route lines
+    routes = base.transform_filter(
+        alt.datum.type == 'route'
+    ).mark_line(
+        strokeWidth=2,
+        opacity=0.6
+    ).encode(
+        x='longitude:Q',
+        y='latitude:Q',
+        x2='longitude2:Q',
+        y2='latitude2:Q',
+        color=alt.Color('id:N', title='Bus Routes'),
+        tooltip=['id:N']
+    )
+    
+    # Stops
     stops = base.transform_filter(
         alt.datum.type == 'stop'
-    ).mark_circle(size=100).encode(
-        color=alt.value('red'),
-        tooltip=['id', 'demand']
+    ).mark_circle(size=200).encode(
+        color=alt.value('#FF0000'),
+        tooltip=['id:N', 'demand:Q'],
+        opacity=alt.value(0.8)
     )
     
-    # Buses layer
+    # Stop labels
+    labels = base.transform_filter(
+        alt.datum.type == 'stop'
+    ).mark_text(dy=-15, fontSize=12).encode(
+        text='id:N',
+        color=alt.value('white')
+    )
+    
+    # Buses
     buses = base.transform_filter(
         alt.datum.type == 'bus'
-    ).mark_square(size=50).encode(
-        color='color:N',
-        tooltip=['id']
+    ).mark_square(size=100).encode(
+        color=alt.Color('id:N', scale=None),
+        tooltip=['id:N'],
+        opacity=alt.value(0.9)
     )
     
-    # Combine layers
-    return (stops + buses).properties(
-        width=600,
-        height=400
+    # Combine all layers
+    chart = (routes + stops + labels + buses).properties(
+        width=800,
+        height=600,
+        title=alt.TitleParams(
+            text="DART System Route Animation",
+            color='white',
+            fontSize=20
+        )
     ).configure_view(
-        stroke=None
+        strokeWidth=0.5,
+        stroke='gray'
+    ).configure_axis(
+        labelColor='white',
+        titleColor='white',
+        gridColor='gray'
+    ).configure_legend(
+        titleColor='white',
+        labelColor='white',
+        symbolStrokeWidth=2,
+        padding=10
     )
+    
+    return chart
 
 def main():
+    st.set_page_config(layout="wide")
     st.title("DART System Simulation")
     st.write("Dynamic Adaptive Route Transit System")
     
@@ -218,7 +263,6 @@ def main():
     if 'dart_system' not in st.session_state:
         st.session_state.dart_system = DARTSystem()
         
-        # Add Chennai stops
         chennai_stops = [
             ("CMBT",     13.0694, 80.1000),
             ("CENTRAL",  13.0827, 80.2707),
@@ -230,7 +274,6 @@ def main():
         for stop_id, lat, lon in chennai_stops:
             st.session_state.dart_system.add_stop(stop_id, lat, lon)
             
-        # Add buses starting at CMBT
         for i in range(5):
             st.session_state.dart_system.add_bus(f"Bus_{i}", "CMBT", 60)
     
@@ -260,23 +303,32 @@ def main():
         st.write("### Route Assignments")
         for bus_id, bus in st.session_state.dart_system.buses.items():
             if bus.route:
-                st.write(f"{bus_id}: {' → '.join(bus.route)}")
+                st.write(f"{bus.label}: {' → '.join(bus.route)}")
             else:
-                st.write(f"{bus_id}: Standby")
+                st.write(f"{bus.label}: Standby")
         
-        # Animate bus movements
-        frames = 50
+        # Animation settings
+        frames = 120  # More frames for smoother animation
+        animation_speed = 0.05  # 6 second total duration
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status = st.empty()
+        
+        # Animation loop
         for i in range(frames):
             progress = i / (frames - 1)
+            progress_bar.progress(progress)
             
-            # Get frame data
             frame_data = st.session_state.dart_system.get_animation_frame(progress)
-            
-            # Create and display chart
             chart = create_animation_chart(frame_data)
-            animation_container.altair_chart(chart)
+            animation_container.altair_chart(chart, use_container_width=True)
             
-            time.sleep(0.1)
+            status.write(f"Simulation Time: {int((progress * 10) + 1)} minutes")
+            time.sleep(animation_speed)
+        
+        progress_bar.empty()
+        status.empty()
     
     # System metrics
     st.write("### System Metrics")
@@ -294,17 +346,18 @@ def main():
     1. Use the sliders to set passenger demand at each stop
     2. Click 'Update Routes' to:
         - Calculate optimal routes
-        - Show animated bus movements
+        - Show animated bus movements with route traces
         - Display system metrics
     3. The animation shows:
-        - Red circles: Bus stops
+        - Red circles: Bus stops with demand
         - Colored squares: Buses moving along routes
-        - Size of stops indicates demand
+        - Colored lines: Route paths for each bus
+        - Size of stops indicates demand level
     4. Routes are optimized based on:
         - Current demand at each stop
         - Distance between stops
-        - Bus capacity
-        - System-wide efficiency
+        - Bus capacity and current load
+        - Overall system efficiency
     """)
 
 if __name__ == "__main__":
