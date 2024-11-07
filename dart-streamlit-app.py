@@ -143,20 +143,22 @@ def main():
             route = st.session_state.dart_system.find_optimal_route(bus_id)
             st.session_state.dart_system.buses[bus_id].route = route
     
-    # Display map using Streamlit's built-in map
-    st.write("### Real-time Route Map")
-    
     # Create DataFrame for stops
     stop_data = {
-        'location': [[stop.location.latitude, stop.location.longitude] 
-                    for stop in st.session_state.dart_system.stops.values()],
-        'name': list(st.session_state.dart_system.stops.keys()),
-        'demand': [demands[stop_id] for stop_id in st.session_state.dart_system.stops]
+        'Stop': list(st.session_state.dart_system.stops.keys()),
+        'latitude': [stop.location.latitude for stop in st.session_state.dart_system.stops.values()],
+        'longitude': [stop.location.longitude for stop in st.session_state.dart_system.stops.values()],
+        'Demand': [demands[stop_id] for stop_id in st.session_state.dart_system.stops]
     }
     stop_df = pd.DataFrame(stop_data)
     
+    # Display current demand table
+    st.write("### Current Demands")
+    st.dataframe(stop_df[['Stop', 'Demand']])
+    
     # Display map
-    st.map(stop_df, latitude=0, longitude=1, size='demand')
+    st.write("### Stop Locations")
+    st.map(data=stop_df)
     
     # Display routes
     st.write("### Current Routes")
@@ -175,10 +177,25 @@ def main():
         - Current demand at each stop
         - Distance between stops
         - Bus capacity (60 passengers)
-    4. The map shows:
-        - Circle size indicates demand at each stop
-        - Routes are displayed as text below the map
+    4. The visualization shows:
+        - Map with stop locations
+        - Current demand at each stop
+        - Optimized routes for each bus
     """)
+
+    # Add metrics
+    if st.session_state.dart_system.buses:
+        st.write("### System Metrics")
+        total_demand = sum(demands.values())
+        active_buses = sum(1 for bus in st.session_state.dart_system.buses.values() if bus.route)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Demand", total_demand)
+        with col2:
+            st.metric("Active Buses", active_buses)
+        with col3:
+            st.metric("Stops", len(st.session_state.dart_system.stops))
 
 if __name__ == "__main__":
     main()
