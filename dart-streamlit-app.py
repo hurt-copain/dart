@@ -4,7 +4,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import time
-import altair as alt
+import plotly.graph_objects as go
 
 @dataclass
 class Location:
@@ -176,83 +176,89 @@ class DARTSystem:
         return pd.DataFrame(frame_data)
 
 def create_animation_chart(frame_data):
-    # Set chart bounds with padding
-    x_min = frame_data['longitude'].min() - 0.1
-    x_max = frame_data['longitude'].max() + 0.1
-    y_min = frame_data['latitude'].min() - 0.1
-    y_max = frame_data['latitude'].max() + 0.1
+    import plotly.graph_objects as go
     
-    # Base chart settings
-    base = alt.Chart(frame_data).encode(
-        x=alt.X('longitude:Q', scale=alt.Scale(domain=[x_min, x_max])),
-        y=alt.Y('latitude:Q', scale=alt.Scale(domain=[y_min, y_max]))
-    )
+    fig = go.Figure()
     
-    # Route lines
-    routes = base.transform_filter(
-        alt.datum.type == 'route'
-    ).mark_line(
-        strokeWidth=2,
-        opacity=0.6
-    ).encode(
-        x='longitude:Q',
-        y='latitude:Q',
-        x2='longitude2:Q',
-        y2='latitude2:Q',
-        color=alt.Color('id:N', title='Bus Routes'),
-        tooltip=['id:N']
-    )
+    # Add route lines for each bus
+    for bus_id in frame_data[frame_data['type'] == 'bus']['id'].unique():
+        routes = frame_data[
+            (frame_data['type'] == 'route') & 
+            (frame_data['id'] == bus_id)
+        ]
+        if not routes.empty:
+            fig.add_trace(go.Scatter(
+                x=[routes['longitude'], routes['longitude2']],
+                y=[routes['latitude'], routes['latitude2']],
+                mode='lines',
+                name=f"{bus_id} Route",
+                line=dict(
+                    color=routes.iloc[0]['color'],
+                    width=2
+                )
+            ))
     
-    # Stops
-    stops = base.transform_filter(
-        alt.datum.type == 'stop'
-    ).mark_circle(size=200).encode(
-        color=alt.value('#FF0000'),
-        tooltip=['id:N', 'demand:Q'],
-        opacity=alt.value(0.8)
-    )
+    # Add stops
+    stops = frame_data[frame_data['type'] == 'stop']
+    fig.add_trace(go.Scatter(
+        x=stops['longitude'],
+        y=stops['latitude'],
+        mode='markers+text',
+        name='Bus Stops',
+        text=stops['id'],
+        textposition="top center",
+        marker=dict(
+            size=20,
+            color='red',
+            symbol='circle'
+        )
+    ))
     
-    # Stop labels
-    labels = base.transform_filter(
-        alt.datum.type == 'stop'
-    ).mark_text(dy=-15, fontSize=12).encode(
-        text='id:N',
-        color=alt.value('white')
-    )
+    # Add buses
+    buses = frame_data[frame_data['type'] == 'bus']
+    fig.add_trace(go.Scatter(
+        x=buses['longitude'],
+        y=buses['latitude'],
+        mode='markers+text',
+        name='Buses',
+        text=buses['id'],
+        textposition="bottom center",
+        marker=dict(
+            size=15,
+            color=buses['color'],
+            symbol='square'
+        )
+    ))
     
-    # Buses
-    buses = base.transform_filter(
-        alt.datum.type == 'bus'
-    ).mark_square(size=100).encode(
-        color=alt.Color('id:N', scale=None),
-        tooltip=['id:N'],
-        opacity=alt.value(0.9)
-    )
-    
-    # Combine all layers
-    chart = (routes + stops + labels + buses).properties(
+    # Update layout
+    fig.update_layout(
+        title="DART System Route Animation",
+        plot_bgcolor='black',
+        paper_bgcolor='black',
+        showlegend=True,
         width=800,
         height=600,
-        title=alt.TitleParams(
-            text="DART System Route Animation",
-            color='white',
-            fontSize=20
+        font=dict(color='white'),
+        xaxis=dict(
+            showgrid=True,
+            gridcolor='gray',
+            title='Longitude',
+            color='white'
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor='gray',
+            title='Latitude',
+            color='white'
+        ),
+        legend=dict(
+            font=dict(color='white')
         )
-    ).configure_view(
-        strokeWidth=0.5,
-        stroke='gray'
-    ).configure_axis(
-        labelColor='white',
-        titleColor='white',
-        gridColor='gray'
-    ).configure_legend(
-        titleColor='white',
-        labelColor='white',
-        symbolStrokeWidth=2,
-        padding=10
     )
     
-    return chart
+    return fig
+
+
 
 def main():
     st.set_page_config(layout="wide")
@@ -325,11 +331,14 @@ def main():
                 progress_bar.progress(progress)
                 
                 frame_data = st.session_state.dart_system.get_animation_frame(progress)
-                chart = create_animation_chart(frame_data)
-                animation_container.altair_chart(chart, use_container_width=True)
+                fig = create_animation_chart(frame_data)
+                animation_container.plotly_chart(fig, use_container_width=True)
                 
-                status.write(f"Simulation Time: {int((progress * 10) + 1)} minutes")
                 time.sleep(frame_delay)
+                
+                # Update status
+                current_time = int((progress * 10) + 1)
+                status.write(f"Simulation Time: {current_time} minutes")
         except Exception as e:
             st.error(f"Animation error: {str(e)}")
         finally:
