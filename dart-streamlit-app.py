@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import time
 import altair as alt
-from vega_datasets import data
 
 @dataclass
 class Location:
@@ -118,7 +117,7 @@ class DARTSystem:
         
         return route
 
-    def update_all_routes(self):
+def update_all_routes(self):
         self.assigned_demands = {}
         bus_ids = sorted(self.buses.keys())
         
@@ -139,7 +138,7 @@ class DARTSystem:
                 'demand': stop.demand
             })
         
-        # Add buses with interpolated positions
+        # Add buses with interpolated positions and routes
         for bus_id, bus in self.buses.items():
             if bus.route and len(bus.route) > 1:
                 route_idx = min(int(progress * (len(bus.route) - 1)), len(bus.route) - 2)
@@ -151,9 +150,10 @@ class DARTSystem:
                 lat = current_stop.location.latitude + (next_stop.location.latitude - current_stop.location.latitude) * sub_progress
                 lon = current_stop.location.longitude + (next_stop.location.longitude - current_stop.location.longitude) * sub_progress
                 
+                # Add bus position
                 frame_data.append({
                     'type': 'bus',
-                    'id': bus.label,  # Use bus label instead of ID
+                    'id': bus.label,
                     'latitude': lat,
                     'longitude': lon,
                     'color': bus.route_color
@@ -290,7 +290,10 @@ def main():
     # Animation container
     animation_container = st.empty()
     
-    # Update button
+    # Update button with simulation speed control
+    st.sidebar.write("### Simulation Controls")
+    animation_speed = st.sidebar.slider("Animation Speed (seconds)", 3.0, 10.0, 6.0)
+    
     if st.sidebar.button("Update Routes"):
         # Update demands
         for stop_id, demand in demands.items():
@@ -309,26 +312,29 @@ def main():
         
         # Animation settings
         frames = 120  # More frames for smoother animation
-        animation_speed = 0.05  # 6 second total duration
+        frame_delay = animation_speed / frames  # Distribute total time across frames
         
         # Progress tracking
         progress_bar = st.progress(0)
         status = st.empty()
         
         # Animation loop
-        for i in range(frames):
-            progress = i / (frames - 1)
-            progress_bar.progress(progress)
-            
-            frame_data = st.session_state.dart_system.get_animation_frame(progress)
-            chart = create_animation_chart(frame_data)
-            animation_container.altair_chart(chart, use_container_width=True)
-            
-            status.write(f"Simulation Time: {int((progress * 10) + 1)} minutes")
-            time.sleep(animation_speed)
-        
-        progress_bar.empty()
-        status.empty()
+        try:
+            for i in range(frames):
+                progress = i / (frames - 1)
+                progress_bar.progress(progress)
+                
+                frame_data = st.session_state.dart_system.get_animation_frame(progress)
+                chart = create_animation_chart(frame_data)
+                animation_container.altair_chart(chart, use_container_width=True)
+                
+                status.write(f"Simulation Time: {int((progress * 10) + 1)} minutes")
+                time.sleep(frame_delay)
+        except Exception as e:
+            st.error(f"Animation error: {str(e)}")
+        finally:
+            progress_bar.empty()
+            status.empty()
     
     # System metrics
     st.write("### System Metrics")
@@ -344,16 +350,17 @@ def main():
     st.write("### How it works")
     st.write("""
     1. Use the sliders to set passenger demand at each stop
-    2. Click 'Update Routes' to:
+    2. Adjust animation speed if desired (3-10 seconds)
+    3. Click 'Update Routes' to:
         - Calculate optimal routes
         - Show animated bus movements with route traces
         - Display system metrics
-    3. The animation shows:
+    4. The animation shows:
         - Red circles: Bus stops with demand
         - Colored squares: Buses moving along routes
         - Colored lines: Route paths for each bus
         - Size of stops indicates demand level
-    4. Routes are optimized based on:
+    5. Routes are optimized based on:
         - Current demand at each stop
         - Distance between stops
         - Bus capacity and current load
