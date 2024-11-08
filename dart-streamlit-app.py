@@ -4,7 +4,6 @@ import numpy as np
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import time
-import plotly.graph_objects as go
 
 @dataclass
 class Location:
@@ -124,149 +123,23 @@ class DARTSystem:
         for bus_id in bus_ids:
             route = self.find_optimal_route(bus_id)
             self.buses[bus_id].route = route
-    
-    def get_animation_frame(self, progress):
-        frame_data = []
+
+    def get_state_dataframe(self):
+        """Get current state as a DataFrame for visualization"""
+        data = []
         
         # Add stops
         for stop_id, stop in self.stops.items():
-            frame_data.append({
+            data.append({
                 'type': 'stop',
-                'id': stop_id,
+                'name': stop_id,
                 'latitude': stop.location.latitude,
                 'longitude': stop.location.longitude,
-                'demand': stop.demand
+                'demand': stop.demand,
+                'size': 20 + stop.demand/2  # Size based on demand
             })
         
-        # Add buses with interpolated positions and routes
-        for bus_id, bus in self.buses.items():
-            if bus.route and len(bus.route) > 1:
-                route_idx = min(int(progress * (len(bus.route) - 1)), len(bus.route) - 2)
-                sub_progress = (progress * (len(bus.route) - 1)) % 1
-                
-                current_stop = self.stops[bus.route[route_idx]]
-                next_stop = self.stops[bus.route[route_idx + 1]]
-                
-                lat = current_stop.location.latitude + (next_stop.location.latitude - current_stop.location.latitude) * sub_progress
-                lon = current_stop.location.longitude + (next_stop.location.longitude - current_stop.location.longitude) * sub_progress
-                
-                # Add bus position
-                frame_data.append({
-                    'type': 'bus',
-                    'id': bus.label,
-                    'latitude': lat,
-                    'longitude': lon,
-                    'color': bus.route_color
-                })
-                
-                # Add route lines
-                for i in range(len(bus.route) - 1):
-                    start = self.stops[bus.route[i]]
-                    end = self.stops[bus.route[i + 1]]
-                    frame_data.append({
-                        'type': 'route',
-                        'id': bus.label,
-                        'latitude': start.location.latitude,
-                        'longitude': start.location.longitude,
-                        'latitude2': end.location.latitude,
-                        'longitude2': end.location.longitude,
-                        'color': bus.route_color
-                    })
-        
-        return pd.DataFrame(frame_data)
-
-def create_animation_chart(frame_data):
-    fig = go.Figure()
-    
-    # Add route lines for each bus
-    for bus_id in frame_data[frame_data['type'] == 'bus']['id'].unique():
-        routes = frame_data[
-            (frame_data['type'] == 'route') & 
-            (frame_data['id'] == bus_id)
-        ]
-        if not routes.empty:
-            for _, route in routes.iterrows():
-                fig.add_trace(go.Scatter(
-                    x=[route['longitude'], route['longitude2']],
-                    y=[route['latitude'], route['latitude2']],
-                    mode='lines',
-                    name=f"{bus_id} Route",
-                    line=dict(
-                        color=route['color'],
-                        width=2
-                    ),
-                    showlegend=(route.name == 0)  # Show legend only once per bus
-                ))
-    
-    # Add stops
-    stops = frame_data[frame_data['type'] == 'stop']
-    fig.add_trace(go.Scatter(
-        x=stops['longitude'],
-        y=stops['latitude'],
-        mode='markers+text',
-        name='Bus Stops',
-        text=stops['id'] + '<br>Demand: ' + stops['demand'].astype(str),
-        textposition="top center",
-        marker=dict(
-            size=20,
-            color='red',
-            symbol='circle'
-        )
-    ))
-    
-    # Add buses
-    buses = frame_data[frame_data['type'] == 'bus']
-    for _, bus in buses.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[bus['longitude']],
-            y=[bus['latitude']],
-            mode='markers+text',
-            name=bus['id'],
-            text=bus['id'],
-            textposition="bottom center",
-            marker=dict(
-                size=15,
-                color=bus['color'],
-                symbol='square'
-            )
-        ))
-    
-    # Update layout
-    fig.update_layout(
-        title=dict(
-            text="DART System Route Animation",
-            x=0.5,
-            y=0.95,
-            font=dict(size=24, color='white')
-        ),
-        plot_bgcolor='black',
-        paper_bgcolor='black',
-        showlegend=True,
-        width=1000,
-        height=800,
-        font=dict(color='white'),
-        xaxis=dict(
-            showgrid=True,
-            gridcolor='rgba(128, 128, 128, 0.2)',
-            zeroline=False,
-            title='Longitude',
-            color='white'
-        ),
-        yaxis=dict(
-            showgrid=True,
-            gridcolor='rgba(128, 128, 128, 0.2)',
-            zeroline=False,
-            title='Latitude',
-            color='white'
-        ),
-        legend=dict(
-            font=dict(color='white'),
-            bgcolor='rgba(0,0,0,0.5)'
-        ),
-        margin=dict(l=50, r=50, t=80, b=50)
-    )
-    
-    return fig
+        return pd.DataFrame(data)
 
 def main():
     st.set_page_config(layout="wide")
@@ -301,13 +174,7 @@ def main():
             key=f"demand_{stop_id}"
         )
     
-    # Animation container
-    animation_container = st.empty()
-    
-    # Update button with simulation speed control
-    st.sidebar.write("### Simulation Controls")
-    animation_speed = st.sidebar.slider("Animation Speed (seconds)", 3.0, 10.0, 6.0)
-    
+    # Update button
     if st.sidebar.button("Update Routes"):
         # Update demands
         for stop_id, demand in demands.items():
@@ -316,42 +183,33 @@ def main():
         # Calculate new routes
         st.session_state.dart_system.update_all_routes()
         
-        # Display initial routes
-        st.write("### Route Assignments")
-        for bus_id, bus in st.session_state.dart_system.buses.items():
-            if bus.route:
-                st.write(f"{bus.label}: {' → '.join(bus.route)}")
-            else:
-                st.write(f"{bus.label}: Standby")
+        # Display current state
+        state_df = st.session_state.dart_system.get_state_dataframe()
         
-        # Animation settings
-        frames = 120  # More frames for smoother animation
-        frame_delay = animation_speed / frames  # Distribute total time across frames
+        # Display routes
+        st.write("### Current Routes")
         
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status = st.empty()
+        # Create columns for bus display
+        cols = st.columns(5)
+        for idx, (bus_id, bus) in enumerate(st.session_state.dart_system.buses.items()):
+            with cols[idx]:
+                st.markdown(f"<p style='color: {bus.route_color}'>{bus.label}</p>", unsafe_allow_html=True)
+                if bus.route:
+                    st.write(" → ".join(bus.route))
+                else:
+                    st.write("Standby")
         
-        # Animation loop
-        try:
-            for i in range(frames):
-                progress = i / (frames - 1)
-                progress_bar.progress(progress)
-                
-                frame_data = st.session_state.dart_system.get_animation_frame(progress)
-                fig = create_animation_chart(frame_data)
-                animation_container.plotly_chart(fig, use_container_width=True)
-                
-                time.sleep(frame_delay)
-                
-                # Update status
-                current_time = int((progress * 10) + 1)
-                status.write(f"Simulation Time: {current_time} minutes")
-        except Exception as e:
-            st.error(f"Animation error: {str(e)}")
-        finally:
-            progress_bar.empty()
-            status.empty()
+        # Display map
+        st.write("### Stop Locations")
+        st.map(state_df, latitude='latitude', longitude='longitude', size='size')
+        
+        # Display demand table
+        st.write("### Current Demands")
+        demand_df = pd.DataFrame({
+            'Stop': list(demands.keys()),
+            'Current Demand': list(demands.values())
+        })
+        st.dataframe(demand_df, hide_index=True)
     
     # System metrics
     st.write("### System Metrics")
@@ -367,17 +225,15 @@ def main():
     st.write("### How it works")
     st.write("""
     1. Use the sliders to set passenger demand at each stop
-    2. Adjust animation speed if desired (3-10 seconds)
-    3. Click 'Update Routes' to:
+    2. Click 'Update Routes' to:
         - Calculate optimal routes
-        - Show animated bus movements with route traces
-        - Display system metrics
-    4. The animation shows:
-        - Red circles: Bus stops with demand
-        - Colored squares: Buses moving along routes
-        - Colored lines: Route paths for each bus
-        - Size of stops indicates demand level
-    5. Routes are optimized based on:
+        - Display updated system status
+        - Show current demands and metrics
+    3. The system shows:
+        - Color-coded bus routes
+        - Stop locations on map
+        - Current demands at each stop
+    4. Routes are optimized based on:
         - Current demand at each stop
         - Distance between stops
         - Bus capacity and current load
