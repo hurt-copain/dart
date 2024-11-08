@@ -176,8 +176,6 @@ class DARTSystem:
         return pd.DataFrame(frame_data)
 
 def create_animation_chart(frame_data):
-    import plotly.graph_objects as go
-    
     fig = go.Figure()
     
     # Add route lines for each bus
@@ -187,16 +185,18 @@ def create_animation_chart(frame_data):
             (frame_data['id'] == bus_id)
         ]
         if not routes.empty:
-            fig.add_trace(go.Scatter(
-                x=[routes['longitude'], routes['longitude2']],
-                y=[routes['latitude'], routes['latitude2']],
-                mode='lines',
-                name=f"{bus_id} Route",
-                line=dict(
-                    color=routes.iloc[0]['color'],
-                    width=2
-                )
-            ))
+            for _, route in routes.iterrows():
+                fig.add_trace(go.Scatter(
+                    x=[route['longitude'], route['longitude2']],
+                    y=[route['latitude'], route['latitude2']],
+                    mode='lines',
+                    name=f"{bus_id} Route",
+                    line=dict(
+                        color=route['color'],
+                        width=2
+                    ),
+                    showlegend=(route.name == 0)  # Show legend only once per bus
+                ))
     
     # Add stops
     stops = frame_data[frame_data['type'] == 'stop']
@@ -205,7 +205,7 @@ def create_animation_chart(frame_data):
         y=stops['latitude'],
         mode='markers+text',
         name='Bus Stops',
-        text=stops['id'],
+        text=stops['id'] + '<br>Demand: ' + stops['demand'].astype(str),
         textposition="top center",
         marker=dict(
             size=20,
@@ -216,49 +216,57 @@ def create_animation_chart(frame_data):
     
     # Add buses
     buses = frame_data[frame_data['type'] == 'bus']
-    fig.add_trace(go.Scatter(
-        x=buses['longitude'],
-        y=buses['latitude'],
-        mode='markers+text',
-        name='Buses',
-        text=buses['id'],
-        textposition="bottom center",
-        marker=dict(
-            size=15,
-            color=buses['color'],
-            symbol='square'
-        )
-    ))
+    for _, bus in buses.iterrows():
+        fig.add_trace(go.Scatter(
+            x=[bus['longitude']],
+            y=[bus['latitude']],
+            mode='markers+text',
+            name=bus['id'],
+            text=bus['id'],
+            textposition="bottom center",
+            marker=dict(
+                size=15,
+                color=bus['color'],
+                symbol='square'
+            )
+        ))
     
     # Update layout
     fig.update_layout(
-        title="DART System Route Animation",
+        title=dict(
+            text="DART System Route Animation",
+            x=0.5,
+            y=0.95,
+            font=dict(size=24, color='white')
+        ),
         plot_bgcolor='black',
         paper_bgcolor='black',
         showlegend=True,
-        width=800,
-        height=600,
+        width=1000,
+        height=800,
         font=dict(color='white'),
         xaxis=dict(
             showgrid=True,
-            gridcolor='gray',
+            gridcolor='rgba(128, 128, 128, 0.2)',
+            zeroline=False,
             title='Longitude',
             color='white'
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor='gray',
+            gridcolor='rgba(128, 128, 128, 0.2)',
+            zeroline=False,
             title='Latitude',
             color='white'
         ),
         legend=dict(
-            font=dict(color='white')
-        )
+            font=dict(color='white'),
+            bgcolor='rgba(0,0,0,0.5)'
+        ),
+        margin=dict(l=50, r=50, t=80, b=50)
     )
     
     return fig
-
-
 
 def main():
     st.set_page_config(layout="wide")
