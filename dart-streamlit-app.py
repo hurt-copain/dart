@@ -1,9 +1,8 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
 import networkx as nx
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 
@@ -30,7 +29,6 @@ class DARTSystem:
         self.pos = None
 
     def initialize_network(self):
-        # Create stops
         for i in range(self.num_stops):
             stop_id = f"Stop_{i}"
             possible_connections = [f"Stop_{j}" for j in range(self.num_stops) if j != i]
@@ -47,45 +45,38 @@ class DARTSystem:
                 connected_stops=connected_stops
             )
             
-            # Add to network graph
             self.network_graph.add_node(stop_id, demand=self.stops[stop_id].waiting_passengers)
             for conn in connected_stops:
                 self.network_graph.add_edge(stop_id, conn)
-        
-        # Initialize buses
+
         for i in range(self.num_buses):
             self.buses.append(Bus(
                 id=f"Bus_{i}",
                 capacity=50,
                 current_stop=f"Stop_0"
             ))
-        
-        # Calculate layout
+
         self.pos = nx.spring_layout(self.network_graph)
 
     def calculate_routes(self) -> Dict[str, List[str]]:
         routes = {}
         covered_stops = set()
         
-        # Calculate demand scores
         demand_scores = {
             stop_id: stop.waiting_passengers 
             for stop_id, stop in self.stops.items()
         }
         
-        # Sort stops by demand
         high_demand_stops = sorted(
             demand_scores.items(),
             key=lambda x: x[1],
             reverse=True
         )
         
-        # Assign routes to buses
         for bus in self.buses:
             if not high_demand_stops:
                 break
             
-            # Start from highest demand uncovered stop
             start_stop = None
             for stop_id, _ in high_demand_stops:
                 if stop_id not in covered_stops:
@@ -99,7 +90,6 @@ class DARTSystem:
             current_stop = start_stop
             covered_stops.add(start_stop)
             
-            # Build route
             while len(route) < 5:
                 next_stop = self._find_next_best_stop(
                     current_stop,
@@ -142,79 +132,54 @@ class DARTSystem:
         
         return best_stop
 
-def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]]] = None):
-    fig = go.Figure()
-    
-    # Add edges
-    for edge in system.network_graph.edges():
-        x0, y0 = system.pos[edge[0]]
-        x1, y1 = system.pos[edge[1]]
-        fig.add_trace(go.Scatter(
-            x=[x0, x1, None],
-            y=[y0, y1, None],
-            mode='lines',
-            line=dict(color='lightgray', width=1),
-            hoverinfo='none'
-        ))
-    
-    # Add routes
-    if routes:
-        colors = px.colors.qualitative.Set3[:len(routes)]
-        for (bus_id, route), color in zip(routes.items(), colors):
-            for i in range(len(route)-1):
-                x0, y0 = system.pos[route[i]]
-                x1, y1 = system.pos[route[i+1]]
-                fig.add_trace(go.Scatter(
-                    x=[x0, x1],
-                    y=[y0, y1],
-                    mode='lines',
-                    name=bus_id,
-                    line=dict(color=color, width=3),
-                    hoverinfo='text',
-                    text=f"{bus_id}: {route[i]} → {route[i+1]}"
-                ))
-    
-    # Add nodes
-    node_x = []
-    node_y = []
-    node_text = []
-    node_size = []
-    
-    for node in system.network_graph.nodes():
-        x, y = system.pos[node]
-        node_x.append(x)
-        node_y.append(y)
-        demand = system.stops[node].waiting_passengers
-        node_text.append(f"{node}<br>Demand: {demand}")
-        node_size.append(demand)
-    
-    fig.add_trace(go.Scatter(
-        x=node_x,
-        y=node_y,
-        mode='markers+text',
-        name='Bus Stops',
-        marker=dict(
-            size=15,
-            color=node_size,
-            colorscale='YlOrRd',
-            showscale=True,
-            colorbar=dict(title='Passenger Demand')
-        ),
-        text=[node.split('_')[1] for node in system.network_graph.nodes()],
-        hovertext=node_text,
-        hoverinfo='text'
-    ))
-    
-    fig.update_layout(
-        showlegend=True,
-        hovermode='closest',
-        margin=dict(b=20,l=5,r=5,t=40),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        title="DART System Network"
-    )
-    
-    return fig
+    def visualize_network(self, routes=None):
+        plt.figure(figsize=(10, 6))
+        
+        # Draw basic network
+        nx.draw_networkx_edges(
+            self.network_graph, 
+            self.pos, 
+            edge_color='gray', 
+            alpha=0.2
+        )
+        
+        # Draw nodes (stops)
+        node_sizes = [
+            self.stops[node].waiting_passengers * 20 
+            for node in self.network_graph.nodes()
+        ]
+        nx.draw_networkx_nodes(
+            self.network_graph, 
+            self.pos, 
+            node_size=node_sizes,
+            node_color='lightblue'
+        )
+        
+        # Draw labels
+        labels = {
+            node: f"{node}\n({self.stops[node].waiting_passengers})"
+            for node in self.network_graph.nodes()
+        }
+        nx.draw_networkx_labels(self.network_graph, self.pos, labels)
+        
+        # Draw routes if provided
+        if routes:
+            colors = ['r', 'g', 'b', 'orange', 'purple']
+            for (bus_id, route), color in zip(routes.items(), colors):
+                path_edges = list(zip(route[:-1], route[1:]))
+                nx.draw_networkx_edges(
+                    self.network_graph,
+                    self.pos,
+                    edgelist=path_edges,
+                    edge_color=color,
+                    width=2,
+                    label=f"Bus {bus_id}"
+                )
+        
+        plt.title("DART System Network")
+        plt.legend()
+        plt.axis('off')
+        return plt
 
 def show_route_analysis(system: DARTSystem, routes: Dict[str, List[str]]):
     st.write("### Route Analysis")
@@ -234,12 +199,13 @@ def show_route_analysis(system: DARTSystem, routes: Dict[str, List[str]]):
             
             st.write("Route:", " → ".join(route))
             
+            # Show demand distribution using Streamlit's native chart
             demands = [system.stops[stop].waiting_passengers for stop in route]
-            df = pd.DataFrame({
+            chart_data = pd.DataFrame({
                 'Stop': route,
                 'Demand': demands
-            }).set_index('Stop')
-            st.bar_chart(df)
+            })
+            st.bar_chart(chart_data.set_index('Stop'))
 
 def main():
     st.set_page_config(layout="wide")
@@ -249,26 +215,25 @@ def main():
     Applying computer networking principles to optimize bus routing
     """)
     
-    # Sidebar controls
     st.sidebar.header("System Parameters")
     num_stops = st.sidebar.slider("Number of Stops", 5, 15, 10)
     num_buses = st.sidebar.slider("Number of Buses", 2, 8, 5)
     
-    # Initialize system
     if 'system' not in st.session_state or st.sidebar.button("Reset System"):
         st.session_state.system = DARTSystem(num_stops, num_buses)
         st.session_state.system.initialize_network()
         st.session_state.routes = None
     
-    # Main content
     col1, col2 = st.columns([2, 1])
     
     with col1:
         if st.button("Calculate Routes"):
             st.session_state.routes = st.session_state.system.calculate_routes()
+            st.success("Routes calculated!")
         
-        fig = create_network_plot(st.session_state.system, st.session_state.routes)
-        st.plotly_chart(fig, use_container_width=True)
+        # Use matplotlib figure
+        fig = st.session_state.system.visualize_network(st.session_state.routes)
+        st.pyplot(fig)
     
     with col2:
         st.write("### System Information")
