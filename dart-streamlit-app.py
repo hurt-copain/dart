@@ -1,244 +1,324 @@
 import streamlit as st
-import pandas as pd
+import networkx as nx
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 import time
-
-@dataclass
-class Location:
-    latitude: float
-    longitude: float
 
 @dataclass
 class BusStop:
     id: str
-    location: Location
-    demand: int = 0
-    total_served: int = 0
+    waiting_passengers: int
+    connected_stops: List[str]
 
 @dataclass
 class Bus:
     id: str
-    current_stop: str
     capacity: int
-    passengers: int = 0
+    current_stop: str
     route: List[str] = None
-    route_color: str = None
-    label: str = None
 
 class DARTSystem:
-    def __init__(self):
+    def __init__(self, num_stops: int, num_buses: int):
+        self.num_stops = num_stops
+        self.num_buses = num_buses
         self.stops: Dict[str, BusStop] = {}
-        self.buses: Dict[str, Bus] = {}
-        self.colors = {
-            'Bus_0': {'name': 'Express Red Line', 'color': '#FF4B4B'},
-            'Bus_1': {'name': 'Rapid Blue Line', 'color': '#4B8BFF'},
-            'Bus_2': {'name': 'Green Circuit', 'color': '#4BFF4B'},
-            'Bus_3': {'name': 'Orange Loop', 'color': '#FFB74B'},
-            'Bus_4': {'name': 'Purple Connect', 'color': '#B74BFF'}
-        }
-        self.assigned_demands = {}
-    
-    def add_stop(self, stop_id: str, latitude: float, longitude: float):
-        self.stops[stop_id] = BusStop(
-            id=stop_id,
-            location=Location(latitude, longitude)
-        )
-    
-    def add_bus(self, bus_id: str, start_stop: str, capacity: int):
-        self.buses[bus_id] = Bus(
-            id=bus_id,
-            current_stop=start_stop,
-            capacity=capacity,
-            route_color=self.colors[bus_id]['color'],
-            label=self.colors[bus_id]['name']
-        )
-    
-    def _calculate_distance(self, loc1: Location, loc2: Location) -> float:
-        R = 6371
-        lat1, lon1 = np.radians([loc1.latitude, loc1.longitude])
-        lat2, lon2 = np.radians([loc2.latitude, loc2.longitude])
-        dlat, dlon = lat2 - lat1, lon2 - lon1
-        a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
-        return 2 * R * np.arcsin(np.sqrt(a))
+        self.buses: List[Bus] = []
+        self.network_graph = nx.Graph()
+        self.pos = None
 
-    def find_optimal_route(self, bus_id: str, max_stops: int = 5) -> List[str]:
-        bus = self.buses[bus_id]
-        remaining_capacity = bus.capacity
+    def initialize_network(self):
+        """Initialize network with stops and connections"""
+        # Create stops
+        for i in range(self.num_stops):
+            stop_id = f"Stop_{i}"
+            possible_connections = [f"Stop_{j}" for j in range(self.num_stops) if j != i]
+            num_connections = np.random.randint(2, 4)
+            connected_stops = np.random.choice(
+                possible_connections, 
+                size=min(num_connections, len(possible_connections)), 
+                replace=False
+            ).tolist()
+            
+            self.stops[stop_id] = BusStop(
+                id=stop_id,
+                waiting_passengers=np.random.randint(10, 100),
+                connected_stops=connected_stops
+            )
+            
+            # Add to network graph
+            self.network_graph.add_node(stop_id, demand=self.stops[stop_id].waiting_passengers)
+            for conn in connected_stops:
+                self.network_graph.add_edge(stop_id, conn)
         
-        remaining_demands = {
-            stop_id: max(0, stop.demand - self.assigned_demands.get(stop_id, 0))
+        # Initialize buses
+        for i in range(self.num_buses):
+            self.buses.append(Bus(
+                id=f"Bus_{i}",
+                capacity=50,
+                current_stop=f"Stop_0"
+            ))
+        
+        # Calculate layout
+        self.pos = nx.spring_layout(self.network_graph)
+
+    def calculate_routes(self) -> Dict[str, List[str]]:
+        """Calculate optimal routes using network principles"""
+        routes = {}
+        covered_stops = set()
+        
+        # Calculate demand scores
+        demand_scores = {
+            stop_id: stop.waiting_passengers 
             for stop_id, stop in self.stops.items()
         }
         
-        if sum(remaining_demands.values()) == 0:
-            remaining_demands = {
-                stop_id: stop.demand for stop_id, stop in self.stops.items()
-            }
+        # Sort stops by demand
+        high_demand_stops = sorted(
+            demand_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
         
-        route = [bus.current_stop]
-        current_stop = bus.current_stop
-        
-        while len(route) < max_stops and remaining_capacity > 0:
-            best_score = -1
-            next_stop = None
-            
-            for stop_id, demand in remaining_demands.items():
-                if stop_id not in route:
-                    distance = self._calculate_distance(
-                        self.stops[current_stop].location,
-                        self.stops[stop_id].location
-                    )
-                    if distance == 0:
-                        distance = 0.1
-                    
-                    demand_score = demand / bus.capacity
-                    distance_score = 1 / distance
-                    coverage_score = 1 if stop_id not in [b.current_stop for b in self.buses.values()] else 0
-                    
-                    score = (0.4 * demand_score + 
-                            0.4 * distance_score + 
-                            0.2 * coverage_score)
-                    
-                    if score > best_score:
-                        best_score = score
-                        next_stop = stop_id
-            
-            if next_stop is None:
+        # Assign routes to buses
+        for bus in self.buses:
+            if not high_demand_stops:
                 break
             
-            route.append(next_stop)
-            pickup = min(remaining_demands[next_stop], remaining_capacity)
-            remaining_capacity -= pickup
-            self.assigned_demands[next_stop] = self.assigned_demands.get(next_stop, 0) + pickup
-            current_stop = next_stop
+            # Start from highest demand uncovered stop
+            start_stop = None
+            for stop_id, _ in high_demand_stops:
+                if stop_id not in covered_stops:
+                    start_stop = stop_id
+                    break
+            
+            if start_stop is None:
+                continue
+                
+            route = [start_stop]
+            current_stop = start_stop
+            covered_stops.add(start_stop)
+            
+            # Build route
+            while len(route) < 5:
+                next_stop = self._find_next_best_stop(
+                    current_stop,
+                    covered_stops,
+                    demand_scores
+                )
+                
+                if next_stop is None:
+                    break
+                
+                route.append(next_stop)
+                covered_stops.add(next_stop)
+                current_stop = next_stop
+            
+            routes[bus.id] = route
         
-        return route
+        return routes
 
-    def update_all_routes(self):
-        self.assigned_demands = {}
-        bus_ids = sorted(self.buses.keys())
+    def _find_next_best_stop(self, current_stop: str, covered_stops: set, 
+                            demand_scores: Dict[str, int]) -> Optional[str]:
+        """Find next best stop using network metrics"""
+        best_score = -1
+        best_stop = None
         
-        for bus_id in bus_ids:
-            route = self.find_optimal_route(bus_id)
-            self.buses[bus_id].route = route
+        # Check connected stops
+        for next_stop in self.stops[current_stop].connected_stops:
+            if next_stop in covered_stops:
+                continue
+            
+            # Calculate composite score using network principles
+            demand_factor = demand_scores[next_stop]
+            connection_factor = len(self.stops[next_stop].connected_stops)
+            coverage_factor = sum(1 for stop in self.stops[next_stop].connected_stops 
+                                if stop not in covered_stops)
+            
+            score = (0.5 * demand_factor +  # Priority to high demand
+                    0.3 * connection_factor +  # Favor well-connected stops
+                    0.2 * coverage_factor)  # Encourage exploration
+            
+            if score > best_score:
+                best_score = score
+                best_stop = next_stop
+        
+        return best_stop
 
-    def get_state_dataframe(self):
-        """Get current state as a DataFrame for visualization"""
-        data = []
-        
-        # Add stops
-        for stop_id, stop in self.stops.items():
-            data.append({
-                'type': 'stop',
-                'name': stop_id,
-                'latitude': stop.location.latitude,
-                'longitude': stop.location.longitude,
-                'demand': stop.demand,
-                'size': 20 + stop.demand/2  # Size based on demand
-            })
-        
-        return pd.DataFrame(data)
+def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]]] = None):
+    """Create network visualization"""
+    fig = go.Figure()
+    
+    # Add edges (connections)
+    for edge in system.network_graph.edges():
+        x0, y0 = system.pos[edge[0]]
+        x1, y1 = system.pos[edge[1]]
+        fig.add_trace(go.Scatter(
+            x=[x0, x1, None],
+            y=[y0, y1, None],
+            mode='lines',
+            line=dict(color='lightgray', width=1),
+            hoverinfo='none'
+        ))
+    
+    # Add routes if provided
+    if routes:
+        colors = px.colors.qualitative.Set3[:len(routes)]
+        for (bus_id, route), color in zip(routes.items(), colors):
+            for i in range(len(route)-1):
+                x0, y0 = system.pos[route[i]]
+                x1, y1 = system.pos[route[i+1]]
+                fig.add_trace(go.Scatter(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    mode='lines',
+                    name=bus_id,
+                    line=dict(color=color, width=3),
+                    hoverinfo='text',
+                    text=f"{bus_id}: {route[i]} → {route[i+1]}"
+                ))
+    
+    # Add nodes (stops)
+    node_x = []
+    node_y = []
+    node_text = []
+    node_size = []
+    
+    for node in system.network_graph.nodes():
+        x, y = system.pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        demand = system.stops[node].waiting_passengers
+        node_text.append(f"{node}<br>Demand: {demand}")
+        node_size.append(demand)
+    
+    fig.add_trace(go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode='markers+text',
+        name='Bus Stops',
+        marker=dict(
+            size=15,
+            color=node_size,
+            colorscale='YlOrRd',
+            showscale=True,
+            colorbar=dict(title='Passenger Demand')
+        ),
+        text=[node.split('_')[1] for node in system.network_graph.nodes()],
+        hovertext=node_text,
+        hoverinfo='text'
+    ))
+    
+    fig.update_layout(
+        showlegend=True,
+        hovermode='closest',
+        margin=dict(b=20,l=5,r=5,t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        title="DART System Network"
+    )
+    
+    return fig
+
+def show_route_analysis(system: DARTSystem, routes: Dict[str, List[str]]):
+    """Show route analysis"""
+    st.write("### Route Analysis")
+    
+    for bus_id, route in routes.items():
+        with st.expander(f"{bus_id} Details"):
+            # Calculate metrics
+            total_demand = sum(system.stops[stop].waiting_passengers for stop in route)
+            coverage = len(route) / system.num_stops
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Stops Covered", len(route))
+            with col2:
+                st.metric("Total Demand", total_demand)
+            with col3:
+                st.metric("Coverage", f"{coverage:.1%}")
+            
+            # Show route
+            st.write("Route:", " → ".join(route))
+            
+            # Show demand distribution
+            demands = [system.stops[stop].waiting_passengers for stop in route]
+            df = pd.DataFrame({
+                'Stop': route,
+                'Demand': demands
+            }).set_index('Stop')
+            st.bar_chart(df)
 
 def main():
     st.set_page_config(layout="wide")
     st.title("DART System Simulation")
-    st.write("Dynamic Adaptive Route Transit System")
-    
-    # Initialize system
-    if 'dart_system' not in st.session_state:
-        st.session_state.dart_system = DARTSystem()
-        
-        chennai_stops = [
-            ("CMBT",     13.0694, 80.1000),
-            ("CENTRAL",  13.0827, 80.2707),
-            ("T_NAGAR",  12.9500, 80.2341),
-            ("EGMORE",   13.0732, 80.4000),
-            ("ADYAR",    13.2000, 80.2565)
-        ]
-        
-        for stop_id, lat, lon in chennai_stops:
-            st.session_state.dart_system.add_stop(stop_id, lat, lon)
-            
-        for i in range(5):
-            st.session_state.dart_system.add_bus(f"Bus_{i}", "CMBT", 60)
+    st.write("""
+    ### Dynamic Adaptive Route Transit System
+    Applying computer networking principles to optimize bus routing
+    """)
     
     # Sidebar controls
-    st.sidebar.header("Stop Demands")
-    demands = {}
-    for stop_id in st.session_state.dart_system.stops:
-        demands[stop_id] = st.sidebar.slider(
-            f"{stop_id} Demand",
-            0, 100, 20,
-            key=f"demand_{stop_id}"
-        )
+    st.sidebar.header("System Parameters")
+    num_stops = st.sidebar.slider("Number of Stops", 5, 15, 10)
+    num_buses = st.sidebar.slider("Number of Buses", 2, 8, 5)
     
-    # Update button
-    if st.sidebar.button("Update Routes"):
-        # Update demands
-        for stop_id, demand in demands.items():
-            st.session_state.dart_system.stops[stop_id].demand = demand
-        
-        # Calculate new routes
-        st.session_state.dart_system.update_all_routes()
-        
-        # Display current state
-        state_df = st.session_state.dart_system.get_state_dataframe()
-        
-        # Display routes
-        st.write("### Current Routes")
-        
-        # Create columns for bus display
-        cols = st.columns(5)
-        for idx, (bus_id, bus) in enumerate(st.session_state.dart_system.buses.items()):
-            with cols[idx]:
-                st.markdown(f"<p style='color: {bus.route_color}'>{bus.label}</p>", unsafe_allow_html=True)
-                if bus.route:
-                    st.write(" → ".join(bus.route))
-                else:
-                    st.write("Standby")
-        
-        # Display map
-        st.write("### Stop Locations")
-        st.map(state_df, latitude='latitude', longitude='longitude', size='size')
-        
-        # Display demand table
-        st.write("### Current Demands")
-        demand_df = pd.DataFrame({
-            'Stop': list(demands.keys()),
-            'Current Demand': list(demands.values())
-        })
-        st.dataframe(demand_df, hide_index=True)
+    # Initialize system
+    if 'system' not in st.session_state or st.sidebar.button("Reset System"):
+        st.session_state.system = DARTSystem(num_stops, num_buses)
+        st.session_state.system.initialize_network()
+        st.session_state.routes = None
     
-    # System metrics
-    st.write("### System Metrics")
-    col1, col2, col3 = st.columns(3)
+    # Main content
+    col1, col2 = st.columns([2, 1])
+    
     with col1:
-        st.metric("Total Demand", sum(demands.values()))
+        if st.button("Calculate Routes"):
+            with st.spinner("Calculating optimal routes..."):
+                st.session_state.routes = st.session_state.system.calculate_routes()
+            st.success("Routes calculated!")
+        
+        # Show network visualization
+        fig = create_network_plot(st.session_state.system, st.session_state.routes)
+        st.plotly_chart(fig, use_container_width=True)
+    
     with col2:
-        st.metric("Active Buses", len(st.session_state.dart_system.buses))
-    with col3:
-        st.metric("Total Stops", len(st.session_state.dart_system.stops))
-
-    # Add explanation
-    st.write("### How it works")
-    st.write("""
-    1. Use the sliders to set passenger demand at each stop
-    2. Click 'Update Routes' to:
-        - Calculate optimal routes
-        - Display updated system status
-        - Show current demands and metrics
-    3. The system shows:
-        - Color-coded bus routes
-        - Stop locations on map
-        - Current demands at each stop
-    4. Routes are optimized based on:
-        - Current demand at each stop
-        - Distance between stops
-        - Bus capacity and current load
-        - Overall system efficiency
-    """)
+        st.write("### System Information")
+        
+        # Show metrics
+        total_demand = sum(stop.waiting_passengers 
+                          for stop in st.session_state.system.stops.values())
+        st.metric("Total System Demand", total_demand)
+        
+        if st.session_state.routes:
+            covered_stops = set().union(*st.session_state.routes.values())
+            coverage = len(covered_stops) / num_stops
+            st.metric("System Coverage", f"{coverage:.1%}")
+    
+    # Show route analysis
+    if st.session_state.routes:
+        show_route_analysis(st.session_state.system, st.session_state.routes)
+    
+    # Algorithm explanation
+    with st.expander("How It Works"):
+        st.write("""
+        The DART system uses network-inspired principles to optimize bus routing:
+        
+        1. **Demand Analysis** (50% weight)
+        - Like network traffic analysis
+        - Prioritizes high-demand stops
+        
+        2. **Connectivity** (30% weight)
+        - Like network node importance
+        - Considers stop connections
+        
+        3. **Coverage** (20% weight)
+        - Like network exploration
+        - Ensures system-wide service
+        """)
 
 if __name__ == "__main__":
     main()
