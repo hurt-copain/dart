@@ -1,12 +1,11 @@
 import streamlit as st
-import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import networkx as nx
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
-import time
 
 @dataclass
 class BusStop:
@@ -31,7 +30,6 @@ class DARTSystem:
         self.pos = None
 
     def initialize_network(self):
-        """Initialize network with stops and connections"""
         # Create stops
         for i in range(self.num_stops):
             stop_id = f"Stop_{i}"
@@ -66,7 +64,6 @@ class DARTSystem:
         self.pos = nx.spring_layout(self.network_graph)
 
     def calculate_routes(self) -> Dict[str, List[str]]:
-        """Calculate optimal routes using network principles"""
         routes = {}
         covered_stops = set()
         
@@ -123,24 +120,21 @@ class DARTSystem:
 
     def _find_next_best_stop(self, current_stop: str, covered_stops: set, 
                             demand_scores: Dict[str, int]) -> Optional[str]:
-        """Find next best stop using network metrics"""
         best_score = -1
         best_stop = None
         
-        # Check connected stops
         for next_stop in self.stops[current_stop].connected_stops:
             if next_stop in covered_stops:
                 continue
             
-            # Calculate composite score using network principles
             demand_factor = demand_scores[next_stop]
             connection_factor = len(self.stops[next_stop].connected_stops)
             coverage_factor = sum(1 for stop in self.stops[next_stop].connected_stops 
                                 if stop not in covered_stops)
             
-            score = (0.5 * demand_factor +  # Priority to high demand
-                    0.3 * connection_factor +  # Favor well-connected stops
-                    0.2 * coverage_factor)  # Encourage exploration
+            score = (0.5 * demand_factor +
+                    0.3 * connection_factor +
+                    0.2 * coverage_factor)
             
             if score > best_score:
                 best_score = score
@@ -149,10 +143,9 @@ class DARTSystem:
         return best_stop
 
 def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]]] = None):
-    """Create network visualization"""
     fig = go.Figure()
     
-    # Add edges (connections)
+    # Add edges
     for edge in system.network_graph.edges():
         x0, y0 = system.pos[edge[0]]
         x1, y1 = system.pos[edge[1]]
@@ -164,7 +157,7 @@ def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]
             hoverinfo='none'
         ))
     
-    # Add routes if provided
+    # Add routes
     if routes:
         colors = px.colors.qualitative.Set3[:len(routes)]
         for (bus_id, route), color in zip(routes.items(), colors):
@@ -181,7 +174,7 @@ def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]
                     text=f"{bus_id}: {route[i]} → {route[i+1]}"
                 ))
     
-    # Add nodes (stops)
+    # Add nodes
     node_x = []
     node_y = []
     node_text = []
@@ -224,16 +217,13 @@ def create_network_plot(system: DARTSystem, routes: Optional[Dict[str, List[str]
     return fig
 
 def show_route_analysis(system: DARTSystem, routes: Dict[str, List[str]]):
-    """Show route analysis"""
     st.write("### Route Analysis")
     
     for bus_id, route in routes.items():
         with st.expander(f"{bus_id} Details"):
-            # Calculate metrics
             total_demand = sum(system.stops[stop].waiting_passengers for stop in route)
             coverage = len(route) / system.num_stops
             
-            # Display metrics
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Stops Covered", len(route))
@@ -242,10 +232,8 @@ def show_route_analysis(system: DARTSystem, routes: Dict[str, List[str]]):
             with col3:
                 st.metric("Coverage", f"{coverage:.1%}")
             
-            # Show route
             st.write("Route:", " → ".join(route))
             
-            # Show demand distribution
             demands = [system.stops[stop].waiting_passengers for stop in route]
             df = pd.DataFrame({
                 'Stop': route,
@@ -277,18 +265,14 @@ def main():
     
     with col1:
         if st.button("Calculate Routes"):
-            with st.spinner("Calculating optimal routes..."):
-                st.session_state.routes = st.session_state.system.calculate_routes()
-            st.success("Routes calculated!")
+            st.session_state.routes = st.session_state.system.calculate_routes()
         
-        # Show network visualization
         fig = create_network_plot(st.session_state.system, st.session_state.routes)
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
         st.write("### System Information")
         
-        # Show metrics
         total_demand = sum(stop.waiting_passengers 
                           for stop in st.session_state.system.stops.values())
         st.metric("Total System Demand", total_demand)
@@ -298,11 +282,9 @@ def main():
             coverage = len(covered_stops) / num_stops
             st.metric("System Coverage", f"{coverage:.1%}")
     
-    # Show route analysis
     if st.session_state.routes:
         show_route_analysis(st.session_state.system, st.session_state.routes)
     
-    # Algorithm explanation
     with st.expander("How It Works"):
         st.write("""
         The DART system uses network-inspired principles to optimize bus routing:
